@@ -1,138 +1,135 @@
-// ✅ ENHANCED: Detailed weather + global/India toggle + icons + accurate location
+const apiKey = "dif5euUk1RcZXNfKAeuaRzaKlnQvNEZB";
 
 const currentWeather = document.getElementById("currentWeather");
-const forecastList = document.getElementById("forecastList");
-const forecastTitle = document.getElementById("forecastTitle");
-const cityInput = document.getElementById("cityInput");
-const scopeSelect = document.getElementById("scopeSelect");
+const forecastList   = document.getElementById("forecastList");
+const forecastTitle  = document.getElementById("forecastTitle");
+const cityInput      = document.getElementById("cityInput");
 
-const weatherCodeMap = {
-  0: "Clear sky", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
-  45: "Fog", 48: "Rime fog", 51: "Light drizzle", 53: "Moderate drizzle", 55: "Dense drizzle",
-  61: "Slight rain", 63: "Moderate rain", 65: "Heavy rain",
-  71: "Light snow", 73: "Moderate snow", 75: "Heavy snow",
-  95: "Thunderstorm", 99: "Storm with hail"
-};
+/* ---------- helpers ---------- */
+const iconUrl = n => `https://developer.accuweather.com/sites/default/files/${(n < 10 ? "0" : "") + n}-s.png`;
 
-const weatherIcons = {
-  0: "☀️", 1: "🌤️", 2: "⛅", 3: "☁️",
-  45: "🌫️", 48: "🌁", 51: "🌦️", 53: "🌧️", 55: "🌧️",
-  61: "🌦️", 63: "🌧️", 65: "🌧️",
-  71: "🌨️", 73: "🌨️", 75: "❄️",
-  95: "⛈️", 99: "🌩️"
-};
-
-async function getCoordinates(location) {
-  const scope = scopeSelect.value;
-  const countryParam = scope === "india" ? "&countrycodes=in" : "";
-
-  let response = await fetch(`https://nominatim.openstreetmap.org/search?format=json${countryParam}&q=${location}`);
-  let data = await response.json();
-
-  // fallback for Palur/Paluru in Andhra Pradesh
-  if (!data.length || (data[0].display_name.includes("Thailand") || data[0].display_name.includes("Su-ngai Padi"))) {
-    response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&countrycodes=in&q=Paluru,Andhra Pradesh`);
-    data = await response.json();
-  }
-
-  if (!data.length) throw new Error("Location not found");
-
+/* ---------- geo lookup ---------- */
+async function getLocationKey(city) {
+  const res = await fetch(
+    `https://dataservice.accuweather.com/locations/v1/cities/search?apikey=${apiKey}&q=${encodeURIComponent(city)}`
+  );
+  const data = await res.json();
+  if (!data.length) throw new Error("City / village not found");
   return {
-    name: data[0].display_name,
-    lat: data[0].lat,
-    lon: data[0].lon
+    key: data[0].Key,
+    name: `${data[0].LocalizedName}, ${data[0].Country.LocalizedName}`
   };
 }
 
+/* ---------- main fetch & render ---------- */
 async function getWeather() {
-  const inputCity = cityInput.value.trim();
-  if (!inputCity) {
-    alert("Please enter a city, village, district, or country name");
-    return;
-  }
+  const city = cityInput.value.trim();
+  if (!city) return alert("Please enter a location");
+
+  currentWeather.innerHTML = "🌀 Loading…";
+  currentWeather.classList.remove("hidden");
+  forecastList.innerHTML = "";
+  forecastTitle.classList.add("hidden");
+  forecastList.classList.add("hidden");
 
   try {
-    currentWeather.innerHTML = '<p style="text-align: center;">Loading weather data...</p>';
-    currentWeather.classList.remove("hidden");
-    forecastList.innerHTML = "";
-    forecastTitle.classList.add("hidden");
-    forecastList.classList.add("hidden");
+    const loc = await getLocationKey(city);
 
-    const coords = await getCoordinates(inputCity);
-    const lat = coords.lat;
-    const lon = coords.lon;
-    const locationName = coords.name;
-
-    const weatherRes = await fetch(
-      `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&daily=temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,precipitation_sum,sunrise,sunset,windspeed_10m_max,weathercode&timezone=auto`
+    const curRes = await fetch(
+      `https://dataservice.accuweather.com/currentconditions/v1/${loc.key}?apikey=${apiKey}&details=true`
     );
-    if (!weatherRes.ok) throw new Error("Failed to fetch weather data");
-    const weatherData = await weatherRes.json();
+    const foreRes = await fetch(
+      `https://dataservice.accuweather.com/forecasts/v1/daily/5day/${loc.key}?apikey=${apiKey}&details=true&metric=true`
+    );
 
-    displayCurrentWeather(weatherData.current_weather, weatherData.daily, locationName);
-    displayForecast(weatherData.daily);
+    if (!curRes.ok || !foreRes.ok) throw new Error("AccuWeather error");
+
+    const currentData = await curRes.json();
+    const forecastData = await foreRes.json();
+
+    renderToday(currentData[0], forecastData.DailyForecasts[0], loc.name);
+    renderForecast(forecastData.DailyForecasts);
   } catch (err) {
-    console.error("Weather API Error:", err);
-    currentWeather.innerHTML = `<p style=\"color:red; text-align: center;\">Error: ${err.message}</p>`;
-    forecastTitle.classList.add("hidden");
-    forecastList.classList.add("hidden");
+    currentWeather.innerHTML = `<p style="color:red;text-align:center;">❗ ${err.message}</p>`;
   }
 }
 
-function displayCurrentWeather(data, daily, displayName) {
-  const code = data.weathercode;
-  const icon = weatherIcons[code] || "❓";
-  const description = weatherCodeMap[code] || "Unknown";
+/* ---------- render today ---------- */
+function renderToday(current, day, placeName) {
+  const sunrise = day.Sun?.Rise
+    ? new Date(day.Sun.Rise).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: true })
+    : "N/A";
+  const sunset = day.Sun?.Set
+    ? new Date(day.Sun.Set).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: true })
+    : "N/A";
 
   currentWeather.innerHTML = `
-    <div class="current-weather-content">
-      <h2>${displayName}</h2>
-      <div class="weather-main">
-        <div class="temp-main">${Math.round(data.temperature)}°C</div>
-      </div>
-      <p class="weather-description">${icon} ${description}</p>
-      <div class="weather-details">
-        <div class="detail-item"><strong>Feels Like:</strong> ${daily.apparent_temperature_max[0]}°C</div>
-        <div class="detail-item"><strong>Min Temp:</strong> ${daily.temperature_2m_min[0]}°C</div>
-        <div class="detail-item"><strong>Max Temp:</strong> ${daily.temperature_2m_max[0]}°C</div>
-        <div class="detail-item"><strong>Wind:</strong> ${data.windspeed} km/h</div>
-        <div class="detail-item"><strong>Sunrise:</strong> ${daily.sunrise[0]}</div>
-        <div class="detail-item"><strong>Sunset:</strong> ${daily.sunset[0]}</div>
-        <div class="detail-item"><strong>Precipitation:</strong> ${daily.precipitation_sum[0]} mm</div>
-        <div class="detail-item"><strong>Updated:</strong> ${data.time}</div>
-      </div>
+    <h2>📍 ${placeName}</h2>
+    <div class="today-main">${Math.round(current.Temperature.Metric.Value)}°C</div>
+    <img src="${iconUrl(current.WeatherIcon)}" alt="${current.WeatherText}" width="64">
+    <p>${current.WeatherText}</p>
+    <div style="margin-top:8px">
+      <div>🌡️ Feels like: ${Math.round(current.RealFeelTemperature.Metric.Value)}°C</div>
+      <div>💧 Humidity: ${current.RelativeHumidity}%</div>
+      <div>💨 Wind: ${Math.round(current.Wind.Speed.Metric.Value)} km/h</div>
+      <div>🌅 Sunrise: ${sunrise}</div>
+      <div>🌇 Sunset: ${sunset}</div>
     </div>
   `;
-  currentWeather.classList.remove("hidden");
 }
 
-function displayForecast(daily) {
-  forecastList.innerHTML = "";
+/* ---------- render 5-day forecast ---------- */
+function renderForecast(days) {
   forecastTitle.classList.remove("hidden");
-  forecastList.classList.remove("hidden");
+  forecastList.classList.remove("hidden"); // ✅ ensure it's visible
+  forecastList.innerHTML = "";
 
-  for (let i = 0; i < daily.time.length && i < 5; i++) {
-    const code = daily.weathercode[i];
-    const icon = weatherIcons[code] || "❓";
-    const description = weatherCodeMap[code] || "Unknown";
+  days.slice(0, 5).forEach(d => {
+    const date = new Date(d.Date);
+    const weekday = date.toLocaleDateString('en-US', {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric'
+    });
+
+    const sunrise = d.Sun?.Rise
+      ? new Date(d.Sun.Rise).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: true })
+      : "N/A";
+
+    const sunset = d.Sun?.Set
+      ? new Date(d.Sun.Set).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: true })
+      : "N/A";
+
+    const iconPhrase = d.Day.IconPhrase;
+    const iconCode = d.Day.Icon;
+    const iconSrc = iconUrl(iconCode);
+
+    const max = Math.round(d.Temperature.Maximum.Value);
+    const min = Math.round(d.Temperature.Minimum.Value);
+    const realFeelMax = Math.round(d.RealFeelTemperature.Maximum.Value);
+    const realFeelMin = Math.round(d.RealFeelTemperature.Minimum.Value);
+
+    const wind = d.Day.Wind?.Speed?.Value || 0;
+    const precip = d.Day.PrecipitationProbability || 0;
 
     const card = document.createElement("div");
-    card.className = "forecast-card";
+    card.className = "forecast-card card";
     card.innerHTML = `
-      <h4>${new Date(daily.time[i]).toLocaleDateString("en-US", { weekday: "long" })}</h4>
-      <div class="forecast-date">${daily.time[i]}</div>
-      <div class="forecast-temp">${daily.temperature_2m_max[i]}°C / ${daily.temperature_2m_min[i]}°C</div>
-      <p class="forecast-description">${icon} ${description}</p>
-      <div class="forecast-details">
-        <div class="forecast-detail"><span>Wind:</span> ${daily.windspeed_10m_max[i]} km/h</div>
-        <div class="forecast-detail"><span>Precipitation:</span> ${daily.precipitation_sum[i]} mm</div>
-      </div>
+      <h4>${weekday}</h4>
+      <img src="${iconSrc}" alt="${iconPhrase}" width="48">
+      <div><strong>${max}° / ${min}°</strong></div>
+      <div>${iconPhrase}</div>
+      <div>🌡️ RealFeel: ${realFeelMax}° / ${realFeelMin}°</div>
+      <div>🌧️ Precip: ${precip}%</div>
+      <div>💨 Wind: ${wind} km/h</div>
+      <div>🌅 Sunrise: ${sunrise}</div>
+      <div>🌇 Sunset: ${sunset}</div>
     `;
     forecastList.appendChild(card);
-  }
+  });
 }
 
-cityInput.addEventListener("keypress", event => {
-  if (event.key === "Enter") getWeather();
+/* ---------- event listener ---------- */
+cityInput.addEventListener("keypress", e => {
+  if (e.key === "Enter") getWeather();
 });
-document.querySelector('button[onclick="getWeather()"]')?.addEventListener("click", getWeather);
